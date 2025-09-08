@@ -1,6 +1,12 @@
 # -*- coding: utf-8 -*-
 # ملف لتخزين الإعدادات الحساسة مثل توكن البوت
 
-# !!! هام: استبدل النص التالي بالتوكن *الجديد والآمن* الخاص بك !!!
-# !!! لا تشارك هذا الملف أو التوكن مع أي شخص !!!
-BOT_TOKEN = "7510509340:AAFrmv4QI6fpjruDDpJ9QsK7eN4_s7UyYNM"
+import os
+
+# استخدام متغير البيئة من Replit Secrets
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+
+if not BOT_TOKEN:
+    print("!!! خطأ فادح: لم يتم العثور على BOT_TOKEN في متغيرات البيئة.")
+    print("!!! تأكد من إضافة BOT_TOKEN إلى Replit Secrets.")
+    exit()

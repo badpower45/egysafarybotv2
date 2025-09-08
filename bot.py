@@ -14,7 +14,7 @@ try:
     from config import BOT_TOKEN
 except ImportError:
     print("!!! خطأ فادح: لم يتم العثور على ملف 'config.py' أو متغير 'BOT_TOKEN' بداخله.")
-    print("!!! تأكد من إنشاء ملف 'config.py' في نفس المجلد ووضع 'BOT_TOKEN = \"YourToken\"' بداخله.")
+    print("!!! تأكد من إضافة BOT_TOKEN إلى Replit Secrets.")
     exit()
 
 try:
@@ -378,30 +378,7 @@ async def select_end_category(update: Update, context: ContextTypes.DEFAULT_TYPE
          return SELECTING_END_LANDMARK
 
 
-# -*- coding: utf-8 -*-
-# bot.py (الدالة المحدثة لربط الخرائط)
-
-import logging
-from urllib.parse import quote # <<< تأكد من وجود هذا الاستيراد
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup # <<< تأكد من وجود هذه الاستيرادات
-from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler, ConversationHandler,
-    ContextTypes, MessageHandler, filters
-)
-from telegram.constants import ParseMode
-# --- استيراد البيانات والتوكن و الدوال المساعدة الأخرى ---
-# (احتفظ بباقي استيراداتك هنا)
-try:
-    from config import BOT_TOKEN
-    from data import routes_data, neighborhood_data
-    # تأكد من استيراد دوالك المساعدة هنا
-    #from helpers import get_landmark_data_from_name, build_keyboard, find_route_with_proximity, handle_invalid_callback # افترض وجودها في helpers.py
-except ImportError:
-     print("!!! Error importing config/data/helpers.")
-     exit()
-
-# ... (احتفظ بإعدادات الـ logger وحالات المحادثة States ودوال المحادثة الأخرى) ...
-logger = logging.getLogger(__name__)
+from urllib.parse import quote
 
 # --- الدالة المعدلة: select_end_landmark_and_find_route ---
 async def select_end_landmark_and_find_route(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
