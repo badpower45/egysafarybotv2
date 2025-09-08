@@ -171,8 +171,41 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return await show_admin_panel(update, context)
         
     elif query.data == "back_to_main":
-        # العودة للقائمة الرئيسية
-        return await start(query, context)
+        # العودة للقائمة الرئيسية - إصلاح المشكلة
+        user = update.effective_user
+        context.user_data.clear()
+        
+        keyboard = [
+            [InlineKeyboardButton("🚌 البحث عن مواصلات", callback_data="search_transport")],
+            [InlineKeyboardButton("🔍 البحث بالنص المباشر", callback_data="nlp_search")],
+            [InlineKeyboardButton("🗺️ خرائط تفاعلية", callback_data="interactive_maps")],
+            [InlineKeyboardButton("📰 آخر الأخبار والتحديثات", callback_data="latest_updates")]
+        ]
+        
+        if user and (user.id in SUPER_ADMIN_IDS or admin_system.is_admin(user.id)):
+            keyboard.append([InlineKeyboardButton("⚙️ لوحة الإدارة", callback_data="admin_panel")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        welcome_text = f"""
+أهلاً بك يا {user.first_name}! 🚌
+
+أنا بوت مواصلات بورسعيد المطور مع ميزات جديدة:
+
+🔸 **البحث التقليدي**: اختيار الحي والمعالم خطوة بخطوة
+🔸 **البحث الذكي**: اكتب سؤالك مباشرة مثل "إزاي أروح من المستشفى للجامعة؟"
+🔸 **خرائط تفاعلية**: مشاهدة المسارات على الخريطة
+🔸 **تحديثات مباشرة**: معلومات عن حالة المرور والخطوط
+
+اختر الطريقة المفضلة للبحث:
+        """
+        
+        await query.edit_message_text(
+            welcome_text,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return SELECTING_START_NEIGHBORHOOD
 
 async def handle_nlp_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """معالجة البحث بالنص الطبيعي"""

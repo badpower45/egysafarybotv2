@@ -1,0 +1,484 @@
+جميل — هعمل لك وثيقة تفصيلية جاهزة تقدر تبعتها لأي AI/مطور ينفّذ عليها المشروع. هشرح كل ميزة (تصميم + نموذج بيانات + واجهات API + سلوك البوت + اعتبارات أمان + اختبارات قبول) وبعدين أعطي قائمة مهام (milestones) مرتبة للأولوية. كله بالعربي ومباشر للتنفيذ.
+
+نظرة عامة على المتطلبات
+
+المطلوب إضافة / تحسين في البوت:
+
+أوامر إدارية (Admin commands) لتعديل routes, fares, landmarks بدون تعديل data.py.
+
+توسيع بيانات الخرائط: إحضار إحداثيات (Geocoding) وعرض روابط خرائط دقيقة بجانب نتائج المواصلات.
+
+بيانات وقت-حقيقي (Real-time reports) للإبلاغ عن ازدحام/تغيير مسار وتنبيه مستخدمين مهتمين.
+
+ربط بالويب سايت: بوت يسحب/يدفع بيانات عبر API (مصدر بيانات ديناميكي).
+
+نظام حجز (اختياري) تمرير بيانات الحجز من البوت للموقع أو العكس.
+
+تحسين تجربة الإدخال (NLP / Direct Search): قبول مدخلات حرّة ("إزاي أروح من X لـ Y") وتطابق تلقائي على أماكن.
+
+مقترحات إضافية لتحسين الكود والأداء.
+
+تصميم عام مقترح (architecture)
+
+Backend DB: PostgreSQL (موصى به) أو SQLite للـ MVP.
+
+Web API: REST API (Flask / FastAPI) لتخزين/استرجاع/تحديث بيانات الأماكن، إدارة المشرفين، وWebhook للتزامن مع البوت.
+
+Bot: Telegram bot (python-telegram-bot) يتصل بالـ API بدل قراءة data.py مباشرة.
+
+Caching: Redis أو in-process cache لتخزين نتائج الجيوكود والكاش للمسارات.
+
+Worker queue: Celery / RQ لمعالجة مهام الخلفية (geocoding، إشعارات، تنظيف تقارير الوقت-حقيقي).
+
+Optional Admin UI: React dashboard CRUD على الـ API أو استخدام Google Sheets كواجهة سريعة.
+
+نموذج البيانات (DB schema) — أساسي ومبسط (Postgres)
+-- neighborhoods, categories, landmarks, routes, route_points, admins, realtime_reports, bookings, geocache
+
+CREATE TABLE admins (
+  id SERIAL PRIMARY KEY,
+  telegram_id BIGINT UNIQUE,
+  name TEXT,
+  role TEXT, -- e.g., superadmin, editor
+  created_at TIMESTAMP DEFAULT now()
+);
+
+CREATE TABLE neighborhoods (
+  id SERIAL PRIMARY KEY,
+  name TEXT UNIQUE,
+  meta JSONB DEFAULT '{}'
+);
+
+CREATE TABLE categories (
+  id SERIAL PRIMARY KEY,
+  neighborhood_id INT REFERENCES neighborhoods(id) ON DELETE CASCADE,
+  name TEXT
+);
+
+CREATE TABLE landmarks (
+  id SERIAL PRIMARY KEY,
+  neighborhood_id INT REFERENCES neighborhoods(id),
+  category_id INT REFERENCES categories(id),
+  name TEXT,
+  description TEXT,
+  lat DOUBLE PRECISION,
+  lon DOUBLE PRECISION,
+  external_url TEXT,
+  created_by INT REFERENCES admins(id),
+  created_at TIMESTAMP DEFAULT now()
+);
+
+CREATE TABLE routes (
+  id SERIAL PRIMARY KEY,
+  route_name TEXT,
+  fare NUMERIC,
+  notes TEXT
+);
+
+CREATE TABLE route_points (
+  id SERIAL PRIMARY KEY,
+  route_id INT REFERENCES routes(id) ON DELETE CASCADE,
+  ordinal INT, -- ترتيب النقطة في الخط
+  point_name TEXT,
+  landmark_id INT REFERENCES landmarks(id) NULL
+);
+
+CREATE TABLE realtime_reports (
+  id SERIAL PRIMARY KEY,
+  route_id INT REFERENCES routes(id) NULL,
+  point_name TEXT,
+  report_type TEXT, -- e.g., congestion, detour, delay
+  description TEXT,
+  reporter_telegram BIGINT,
+  verified BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT now(),
+  expires_at TIMESTAMP
+);
+
+CREATE TABLE geocache (
+  place_text TEXT PRIMARY KEY,
+  lat DOUBLE PRECISION,
+  lon DOUBLE PRECISION,
+  source TEXT, -- google / nominatim
+  fetched_at TIMESTAMP DEFAULT now()
+);
+
+واجهة الـ Web API (REST) — أمثلة (مسارات رئيسية)
+
+يصمِّم الـ API ليعمل كـ مصدر بيانات مركزي للبوت وواجهة Admin.
+
+GET /api/v1/neighborhoods
+Response:
+
+[{ "id":1, "name":"الحسين", "meta":{} }, ...]
+
+
+GET /api/v1/landmarks?neighborhood=1&category=3
+Response: list of landmarks with lat/lon.
+
+POST /api/v1/routes (Admin)
+Request body:
+
+{
+  "route_name": "خط 5",
+  "fare": 4.5,
+  "points": ["محطة أ", "محطة ب", "محطة ج"]
+}
+
+
+PUT /api/v1/routes/{id}/fare (Admin)
+Request: { "fare": 5.0 }
+
+POST /api/v1/landmarks (Admin)
+
+{
+  "name": "مستشفى X",
+  "neighborhood_id": 2,
+  "category_id": 5,
+  "lat": 31.26,
+  "lon": 32.29,
+  "external_url": "https://egysafari.com/landmark/123"
+}
+
+
+POST /api/v1/reports (User report)
+
+{
+  "route_id": 12, 
+  "point_name": "محطة ب",
+  "report_type": "congestion",
+  "description": "مزدحم جدا الآن",
+  "reporter_telegram": 123456789
+}
+
+
+Auth: Admin endpoints ⇢ JWT token or API key (Authorization: Bearer ...). Bot server uses server-side admin token stored in env.
+
+أوامر وتدفقات البوت — Admin commands (تفصيل)
+
+طريقة التنفيذ داخل البوت: ConversationHandlers منفصلة للأوامر الإدارية، مع خطوات تأكيد.
+
+قائمة أوامر إدارية مقترحة
+
+/admin_add_route — إضافة خط جديد (خطوة بخطوة: اسم الخط → سعر التعريفة → نقاط الخط بترتيب → تأكيد)
+
+/admin_update_fare — تعديل تعريفة لخط محدد (اختيار الخط ثم إدخال السعر ثم تأكيد)
+
+/admin_edit_route — تعديل نقاط خط (إضافة/إزالة/ترتيب)
+
+/admin_add_landmark — إضافة معلم جديد (اسم، حي، تصنيف، وصف، geocode خيارياً، external_url)
+
+/admin_remove_route — حذف خط (مع تأكيد مزدوج)
+
+/admin_list_reports — عرض تقارير الوقت-حقيقي والقدرة على تأكيدها أو رفضها
+
+/admin_broadcast — إرسال رسالة تنبيه لجميع المشتركين أو المشتركين بخط محدد
+
+مصادقة الأوامر
+
+فقط telegram_id الموجود في جدول admins يمكنه تنفيذ أوامر Admin.
+
+عند محاولة أحدهم تنفيذ أمر Admin، البوت يتحقق من update.effective_user.id مقابل DB.
+
+تسجيل audit log لكل عملية (who, what, timestamp).
+
+تدفق مثال: /admin_add_route
+
+المشرف يكتب /admin_add_route.
+
+البوت يسأل: "ادخل اسم الخط".
+
+المشرف يدخل الاسم.
+
+البوت يسأل: "ادخل التعريفة (بالجنيه)".
+
+المشرف يدخل السعر.
+
+البوت يسأل: "ادخل نقاط الخط مفصولة بـ '،' أو أرسل كل نقطة على حدة. اكتب 'انتهى' عند الانتهاء."
+
+المشرف يدخل النقاط، البوت يعرض معاينة.
+
+البوت يطلب تأكيد: "تأكيد إضافة الخط؟ (نعم/لا)".
+
+لو نعم → البوت ينادي على API POST /routes ويحفظ. يُعيد رسالة نجاح.
+
+كل خطوة تُسجل في bot.log وaudit في DB.
+
+الجيوكود (Geocoding) وعرض الخريطة
+خيارات الخدمات
+
+Google Geocoding API (دقيق لكن مدفوع/يتطلّب API Key / قيود استخدام).
+
+Nominatim (OpenStreetMap) — بديل مجاني لكن مع قيود على الـ rate-limit؛ يجب cache وتهدئة الطلبات.
+
+Here Maps, Mapbox — بدائل مدفوعة/محدودة.
+
+سياسة التنفيذ
+
+عند إضافة معلم جديد أو عند البحث عن نقطة نهاية (select_end_landmark) -> إذا لا توجد lat/lon:
+
+اطلب من الـ API الجيوكود (بحث نصي عن اسم المعلم)، خزّن النتيجة في جدول geocache.
+
+اعرض للمستخدم: رابط خرائط Google أو OSM:
+
+Google: https://www.google.com/maps/search/?api=1&query={lat},{lon}
+
+OSM: https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=18/{lat}/{lon}
+
+كود مثال (Nominatim, Python)
+import requests, time
+
+def geocode_place(place_text):
+    # تحقق من الكاش أولاً (DB geocache)
+    cached = get_from_cache(place_text)
+    if cached:
+        return cached['lat'], cached['lon']
+
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {"q": place_text, "format": "json", "limit": 1}
+    headers = {"User-Agent": "EGY-Safary-Bot/1.0 (your@email)"}
+    resp = requests.get(url, params=params, headers=headers, timeout=8)
+    time.sleep(1)  # التزام بلطف لخدمات nomanitim
+    data = resp.json()
+    if not data:
+        return None
+    lat = float(data[0]['lat']); lon = float(data[0]['lon'])
+    save_to_cache(place_text, lat, lon, source='nominatim')
+    return lat, lon
+
+
+ملاحظة أمنية: خزّن مفاتيح API في متغيرات بيئة، لا تضعها في repo.
+
+تقارير الوقت-الحقيقي (Real-time reports)
+الهدف
+
+يمكن لأي مستخدم الإبلاغ عن ازدحام/detour/delay على خط معين أو نقطة، والبوت ينشر تنبيه قصير لمشتركين الخط/منطقة أو يعرضه للمستخدمين الباحثين عن المسار.
+
+نموذج العمل
+
+مستخدم يضغط زر "أبلغ عن مشكلة" في صفحة نتيجة المسار أو يكتب أمر /report.
+
+convo: يختار نوع البلاغ (congestion/detour/delay) → يكتب وصفاً (اختياري) → يضغط تأكيد.
+
+البلاغ يُسجل في جدول realtime_reports مع expires_at (مثلاً بعد 30-120 دقيقة حسب نوع البلاغ).
+
+آلية التوثيق:
+
+بلاغات متعددة عن نفس النقطة تزيد confidence أو يمكن للمستخدمين التحقق (upvote).
+
+المشرف يرى البلاغات ويستطيع تأكيد/رفض.
+
+إشعارات:
+
+عند إنشاء بلاغ مع route_id، يتم إرسال إشعار فوري للمستخدمين الذين بحثوا عن نفس المسار خلال آخر X ساعة أو اشتركوا في التحديثات.
+
+إرسال إشعارات كمراسلات (تلقائية) أو كقناة Telegram (channel) يمكن للمستخدمين الانضمام لها.
+
+احتياطات
+
+حماية من إساءة الاستخدام: rate-limit لكل user (مثلاً 3 تقارير/ساعة).
+
+مطلوب حقن صور؟ إذا سمحت بارسال صورة، خزّنها في S3/Storage ولا تحفظ مباشرة في DB.
+
+NLP وDirect Search (من "كتابة حرّة" إلى بحث مسارات)
+المستهدف
+
+قبول جمل مثل:
+"إزاي أروح من كافيه كافه إلى مستشفى النيل؟"
+واستخراج start_place وend_place.
+
+مستويات التنفيذ (من الأسهل للأقوى)
+
+قواعد + Regex + fuzzy matching (سهل، مناسب لـ MVP)
+
+قسّم الجملة على علامة من / إلى أو ->، ثم نفّذ fuzzy match (RapidFuzz) على أسماء الـ landmarks وneighborhoods.
+
+مثال: لو المدخل "من X إلى Y": parse by splitting; ثم match X vs landmarks with score>85 -> اعتمد.
+
+spaCy / custom NER
+
+درّب نموذج NER بسيط يميّز PER/LOC عن أسماء المعالم الخاصة.
+
+يحتاج مجموعة أمثلة (حوالي 200-1000 جملة) لتحسين الدقة.
+
+LLM (OpenAI / Anthropic) + embeddings (أفضل دقة/مرونة)
+
+استخدم LLM لاستخراج الكيانات (اسماء الأماكن)، ثم استخدم embeddings لمطابقة على قائمة landmarks (semantic match).
+
+يحتاج مفتاح API (وتكاليف).
+
+إجراءات التنفيذ (MVP: fuzzy approach)
+
+استخدم rapidfuzz.process.extractOne(query, choices, score_cutoff=80) للحصول على أفضل تطابق.
+
+إذا لم يحصل على تطابق كافٍ: اطلب توضيح من المستخدم ("هل تقصد ...؟").
+
+مثال كود (fuzzy)
+from rapidfuzz import process, fuzz
+
+def fuzzy_find_place(text, choices):
+    res = process.extractOne(text, choices, scorer=fuzz.WRatio)
+    if res and res[1] >= 80:
+        return res[0]
+    return None
+
+تدفق البوت عند إدخال حر
+
+المستخدم يرسل جملة.
+
+البوت يمررها لموديل الـ parser (split by "من/إلى" ثم fuzzy match).
+
+إذا نجحت الـ matches → نفّذ find_route_logic(start, end).
+
+إذا غامض → اطلب توضيح أو أعرض أكثر من اقتراح (اختيار من 2-3 نتائج).
+
+ربط البوت بالموقع (Sync & Enrichment)
+طرق الربط
+
+الموقع هو المصدر الرئيسي (single source of truth)
+
+الموقع exposes REST API (CRUD) والـ bot يقرأ منها بدلاً من data.py.
+
+Admin dashboard يغيّر البيانات في الموقع مباشرة، والبوت يحصل على التحديثات فوريًا.
+
+Sync بواسطة Webhooks
+
+عندما يغيّر المشرف بيانات (في الموقع)، الموقع ينادي webhook على البوت أو يرسل تحديثًا إلى queue، والبوت يحدث الكاش/DB.
+
+خيار سريع: استخدم Google Sheets + Google Sheets API كـ backend بسيط للمشرفين.
+
+أثر على البوت
+
+عند عرض نتيجة مكان → أضف زر اقرأ المزيد يفتح external_url من الـ landmark (الصفحة على الموقع).
+
+عند الحجز: البوت يجمع بيانات بسيطة ثم يرسل POST /api/v1/bookings إلى الموقع.
+
+نظام حجز (Booking) — تدفق مبسط
+
+المستخدم يضغط "حجز" بعد اختيار خدمة/جولة.
+
+البوت يجمع: اسم، هاتف، عدد الأشخاص، تاريخ، ملاحظات.
+
+البوت يرسل POST إلى /api/v1/bookings مع admin token.
+
+الموقع يرجع رقم حجز + حالة → البوت يعرض رسالة تأكيد مع زر "عرض الحجز".
+
+يمكن إضافة الدفع لاحقاً إذا أردت.
+
+مقترحات تحسين عامة (تطويرية وتقنية)
+
+نقل من ملف data.py إلى DB (أساسي قبل أي تحديث admin).
+
+استخدام caching لنتائج الجيوكود والمسارات المتكررة (Redis).
+
+تقليل حجم callback_data عبر استخدام مفاتيح قصيرة مخزنة في bot_data أو DB (كما عملت في النسخة المحسنة).
+
+تحسين find_route_logic إلى استخدام graph algorithm (BFS/Dijkstra) مع وزنات (hops, transfers, fare) — لدي نسخة في الـ smart bot اللي أرسلتها.
+
+إضافة pagination في القوائم الطويلة (التصنيفات/المعالم).
+
+سجل (audit) مفصل لكل تغيّر إداري (من قام ومتى وماذا غير).
+
+مراقبة وأخطاء: دمج Sentry + rotating file logs.
+
+اختبارات وحدات: unit tests للـ parsing، fuzzy-matching، find_route_logic، وAPI endpoints.
+
+CI/CD: GitHub Actions لنشر تلقائي على Replit/Render.
+
+مخطط مهام تفصيلي (لو هتبعت للمطوّر أو AI)
+
+كل مهمة بصيغة قابلة للتنفيذ مع مخرجات واضحة (acceptance criteria).
+
+مهمة 1 — نقل البيانات لقاعدة بيانات
+
+الوصف: كتابة سكربت migration يحوّل neighborhood_data وroutes_data من data.py إلى DB.
+
+مدخل: data.py
+
+مخرج: جداول مملوءة (neighborhoods, categories, landmarks, routes, route_points).
+
+قبول: كل سجل في data.py يوجد في DB، ولا تغير شكل البيانات.
+
+مهمة 2 — API backend (FastAPI)
+
+الوصف: إنشاء REST API مع endpoints في القسم أعلاه؛ auth مبني عبر JWT/API keys.
+
+قبول: يمكن للبوت إجراء POST/GET لتهيئة وقراءة/تحديث البيانات.
+
+مهمة 3 — Bot uses API instead of data.py
+
+الوصف: تعديل البوت لقراءة القوائم من /api/v1/... بدلاً من import.
+
+قبول: نفس التجربة للمستخدم، مع دعم admin commands التي تنادي API.
+
+مهمة 4 — Admin commands في البوت
+
+الوصف: تنفيذ /admin_add_route, /admin_update_fare, /admin_add_landmark, /admin_list_reports.
+
+قبول: أوامر تعمل، مُعرّفة للمشرفين فقط، وكتابة التغييرات في DB عبر API.
+
+مهمة 5 — Geocoding + cache
+
+الوصف: إضافة خدمة geocode مع الكاش، واستخدامها عند إضافة معالم أو عند بحث نقطة نهاية.
+
+قبول: عرض روابط خرائط مع lat/lon، واستدعاءات قليلة للمصدر بفضل الكاش.
+
+مهمة 6 — Real-time report flow
+
+الوصف: تمكين المستخدم للإبلاغ، تخزين البلاغات، واجهة Admin للمراجعة، إشعارات للمستخدمين المتأثرين.
+
+قبول: بلاغ ظاهر في لوحة المشرف، إشعار للمستخدمين ذوي العلاقة.
+
+مهمة 7 — NLP (MVP fuzzy)
+
+الوصف: إضافة parsing للحوار الحر باستخدام regex + RapidFuzz و fallback للـ UI.
+
+قبول: جمل بسيطة "من X إلى Y" تُحلل وتُرجع نتائج صحيحة بنسبة مقبولة.
+
+مهمة 8 — اختبارات & docs
+
+الوصف: كتابة unit tests، الـ README وAPI docs (OpenAPI).
+
+قبول: تشغيل الاختبارات بنجاح، وجود docs للنشر.
+
+معايير القبول (QA / Acceptance tests)
+
+Admin-only: أوامر admin لا تعمل مع user غير admin.
+
+Data integrity: بعد أي تعديل إداري، API يعكس التغيير فورًا.
+
+Geocoding caching: نفس النص لا يستدعي الجيوكود أكثر من مرة في 24 ساعة.
+
+Reports: بلاغ جديد يولّد سجلًا ويمكن تأكيده/رفضه من admin.
+
+NLP: 90% من العبارات البسيطة (من X إلى Y) يتم استخراجها أو يطلب البوت توضيحاً بوضوح.
+
+No secrets in repo: مفاتيح API أو tokens لا تظهر في الشيفرة (env vars).
+
+اقتراحات إضافية / أفكار مبتكرة
+
+واجهة "اشتراك بالخط": يقدر المستخدم "يتابع" خط معين ويتلقى تنبيهات وقت-حقيقي فقط لذلك الخط.
+
+صفحة ويب تعرض خريطة تفاعلية مع خطوط ومؤشرات الحالة (live reports).
+
+نظام reputation للمبلّغين (لتقليل الإساءة).
+
+إضافة وضع "أفضل طريق حسب الوقت" إن أمكن جمع بيانات زمنية (avg travel time).
+
+دعم لغات متعددة (العربية/الإنجليزية) في الـ DB وAPI.
+
+الخلاصة + ماذا أقدّم لك الآن
+
+جهّزت لك وثيقة قابلة للإرسال لأي AI أو فريق: تشمل نموذج بيانات، API spec، وصف دقيق لأوامر البوت وتدفقات الـ admin، جيوكود، تقارير وقت-حقيقي، وNLP.
+
+لو تحب، أقدر أعمل لك أي واحد من الآتي فورًا هنا:
+
+سكربت migration يحوّل data.py → SQL inserts.
+
+مثال FastAPI skeleton (models, endpoints المذكورة).
+
+كود مثال لـ Admin command (/admin_add_route) بالـ ConversationHandler.
+
+وحدة fuzzy NLP مع أمثلة لاختبار المدخلات.
+
+ملف docker-compose وملف Procfile لرفع على Render/Replit.

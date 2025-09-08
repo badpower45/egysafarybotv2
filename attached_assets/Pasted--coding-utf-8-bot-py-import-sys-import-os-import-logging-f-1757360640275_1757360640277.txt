@@ -1,0 +1,465 @@
+# -*- coding: utf-8 -*- 
+# bot.py - بوت مواصلات بورسعيد
+
+import sys
+import os
+import logging
+from enum import Enum, auto
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application, CommandHandler, CallbackQueryHandler, ConversationHandler,
+    ContextTypes, MessageHandler, filters
+)
+from telegram.constants import ParseMode
+
+# --- Fix for imports when running from a different directory ---
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+# --- إعدادات الـ Logging ---
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
+    level=logging.INFO,
+    handlers=[
+        logging.FileHandler('bot.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# --- استيراد البيانات والتوكن ---
+try:
+    from config import BOT_TOKEN
+    if not BOT_TOKEN or BOT_TOKEN == "YOUR_ACTUAL_BOT_TOKEN_HERE":
+        logger.error("BOT_TOKEN not properly configured in config.py")
+        raise ValueError("BOT_TOKEN is not configured properly")
+except ImportError:
+    logger.error("!!! خطأ فادح: لم يتم العثور على ملف 'config.py' أو متغير 'BOT_TOKEN' بداخله.")
+    logger.error("!!! تأكد من إنشاء ملف 'config.py' في نفس المجلد ووضع 'BOT_TOKEN = \"YourToken\"' بداخله.")
+    exit(1)
+except ValueError as e:
+    logger.error(f"!!! خطأ في إعداد التوكن: {e}")
+    exit(1)
+
+try:
+    from data import routes_data, neighborhood_data
+    from helpers import build_keyboard, find_route_logic
+    
+    if not routes_data or not isinstance(routes_data, list):
+        logger.error("routes_data is empty or not a list")
+        raise ValueError("Invalid routes_data")
+    
+    if not neighborhood_data or not isinstance(neighborhood_data, dict):
+        logger.error("neighborhood_data is empty or not a dict")
+        raise ValueError("Invalid neighborhood_data")
+        
+    logger.info(f"Successfully loaded {len(routes_data)} routes and {len(neighborhood_data)} neighborhoods")
+    
+except ImportError as e:
+    logger.error(f"!!! خطأ فادح: لم يتم العثور على ملفات ('data.py' أو 'helpers.py') أو المتغيرات المطلوبة بداخلها: {e}")
+    exit(1)
+except Exception as e:
+    logger.error(f"!!! خطأ فادح أثناء استيراد البيانات: {e}")
+    exit(1)
+
+# --- تعريف الحالات (States) باستخدام Enum ---
+class States(Enum):
+    SELECTING_START_NEIGHBORHOOD = auto()
+    SELECTING_START_CATEGORY = auto()
+    SELECTING_START_LANDMARK = auto()
+    SELECTING_END_NEIGHBORHOOD = auto()
+    SELECTING_END_CATEGORY = auto()
+    SELECTING_END_LANDMARK = auto()
+
+# --- الدوال المساعدة ---
+
+def validate_data_integrity():
+    """التحقق من صحة البيانات المستوردة"""
+    try:
+        for i, route in enumerate(routes_data):
+            if not isinstance(route, dict):
+                logger.error(f"Route {i} is not a dictionary")
+                return False
+            required_keys = ['routeName', 'keyPoints', 'fare']
+            for key in required_keys:
+                if key not in route:
+                    logger.error(f"Route {i} missing required key: {key}")
+                    return False
+        
+        for neighborhood, categories in neighborhood_data.items():
+            if not isinstance(categories, dict):
+                logger.error(f"Neighborhood '{neighborhood}' categories is not a dictionary")
+                return False
+            for category, landmarks in categories.items():
+                if not isinstance(landmarks, list):
+                    logger.error(f"Category '{category}' in '{neighborhood}' is not a list")
+                    return False
+        
+        logger.info("Data integrity validation passed")
+        return True
+    except Exception as e:
+        logger.error(f"Error during data validation: {e}")
+        return False
+
+# --- معالجات الأحداث ---
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    """بدء المحادثة أو العودة إلى البداية"""
+    user = update.effective_user
+    logger.info(f"User {user.first_name} (ID: {user.id}) started or returned to start.")
+    
+    keyboard = build_keyboard(list(neighborhood_data.keys()), "start_neighborhood")
+    text = "🚌 مرحباً بك في بوت مواصلات بورسعيد!\n\nاختر نقطة البداية:"
+    
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=keyboard)
+    else:
+        await update.message.reply_text(text, reply_markup=keyboard)
+        
+    return States.SELECTING_START_NEIGHBORHOOD
+
+async def select_start_neighborhood(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    """اختيار حي البداية"""
+    query = update.callback_query
+    await query.answer()
+    
+    chosen_neighborhood = query.data.split(":", 1)[1]
+    context.user_data['start_neighborhood'] = chosen_neighborhood
+    logger.info(f"User {update.effective_user.first_name} selected start neighborhood: {chosen_neighborhood}")
+    
+    categories = list(neighborhood_data[chosen_neighborhood].keys())
+    keyboard = build_keyboard(categories, "start_category", back_target="start")
+    
+    await query.edit_message_text(
+        f"🏘️ الحي المختار: {chosen_neighborhood}\n\nاختر التصنيف:",
+        reply_markup=keyboard
+    )
+    return States.SELECTING_START_CATEGORY
+
+async def select_start_category(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    """اختيار تصنيف البداية"""
+    query = update.callback_query
+    await query.answer()
+    
+    chosen_category = query.data.split(":", 1)[1]
+    start_neighborhood = context.user_data.get('start_neighborhood')
+    context.user_data['start_category'] = chosen_category
+    logger.info(f"User {update.effective_user.first_name} selected start category: {chosen_category}")
+
+    landmarks = neighborhood_data[start_neighborhood][chosen_category]
+    keyboard = build_keyboard(landmarks, "start_landmark", back_target="start_neighborhood")
+    
+    await query.edit_message_text(
+        f"🏘️ الحي: {start_neighborhood}\n📂 التصنيف: {chosen_category}\n\nاختر المعلم:",
+        reply_markup=keyboard
+    )
+    return States.SELECTING_START_LANDMARK
+
+async def select_start_landmark(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    """اختيار معلم البداية"""
+    query = update.callback_query
+    await query.answer()
+    
+    chosen_landmark = query.data.split(":", 1)[1]
+    context.user_data['start_landmark'] = chosen_landmark
+    logger.info(f"User {update.effective_user.first_name} selected start landmark: {chosen_landmark}")
+
+    keyboard = build_keyboard(list(neighborhood_data.keys()), "end_neighborhood", back_target="start_category")
+    
+    await query.edit_message_text(
+        f"✅ نقطة البداية: {chosen_landmark}\n\nاختر نقطة النهاية:",
+        reply_markup=keyboard
+    )
+    return States.SELECTING_END_NEIGHBORHOOD
+
+async def select_end_neighborhood(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    """اختيار حي النهاية"""
+    query = update.callback_query
+    await query.answer()
+    
+    chosen_neighborhood = query.data.split(":", 1)[1]
+    context.user_data['end_neighborhood'] = chosen_neighborhood
+    logger.info(f"User {update.effective_user.first_name} selected end neighborhood: {chosen_neighborhood}")
+    
+    categories = list(neighborhood_data[chosen_neighborhood].keys())
+    keyboard = build_keyboard(categories, "end_category", back_target="start_landmark")
+    
+    await query.edit_message_text(
+        f"🏘️ الحي المختار: {chosen_neighborhood}\n\nاختر التصنيف:",
+        reply_markup=keyboard
+    )
+    return States.SELECTING_END_CATEGORY
+
+async def select_end_category(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    """اختيار تصنيف النهاية"""
+    query = update.callback_query
+    await query.answer()
+    
+    chosen_category = query.data.split(":", 1)[1]
+    end_neighborhood = context.user_data.get('end_neighborhood')
+    context.user_data['end_category'] = chosen_category
+    logger.info(f"User selected end category: {chosen_category}")
+
+    landmarks = neighborhood_data[end_neighborhood][chosen_category]
+    keyboard = build_keyboard(landmarks, "end_landmark", back_target="end_neighborhood")
+    
+    await query.edit_message_text(
+        f"🏘️ الحي: {end_neighborhood}\n📂 التصنيف: {chosen_category}\n\nاختر المعلم:",
+        reply_markup=keyboard
+    )
+    return States.SELECTING_END_LANDMARK
+
+async def select_end_landmark_and_find_route(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """اختيار معلم النهاية والبحث عن الطريق"""
+    query = update.callback_query
+    await query.answer()
+    
+    chosen_end_landmark = query.data.split(":", 1)[1]
+    start_landmark = context.user_data.get('start_landmark')
+    logger.info(f"User {update.effective_user.first_name} selected end landmark: {chosen_end_landmark}")
+
+    await query.edit_message_text(text="🔍 جاري البحث عن أفضل طريق...")
+    
+    result = find_route_logic(start_landmark, chosen_end_landmark, routes_data)
+    
+    query_text = f"{chosen_end_landmark} بورسعيد مصر"
+    destination_map_url = f"https://www.google.com/maps/search/{query_text.replace(' ', '+')}"
+    keyboard = [[InlineKeyboardButton("🗺️ عرض على الخريطة", url=destination_map_url)]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        text=f"🎯 **نتيجة البحث**\n\n{result}",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.MARKDOWN
+    )
+    return ConversationHandler.END
+
+
+# --- دوال التنقل للخلف ---
+
+async def _go_back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    """العودة إلى القائمة الرئيسية."""
+    return await start(update, context)
+
+async def _go_back_to_start_category_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    """العودة إلى اختيار تصنيف البداية."""
+    query = update.callback_query
+    chosen_neighborhood = context.user_data.get('start_neighborhood')
+    categories = list(neighborhood_data[chosen_neighborhood].keys())
+    keyboard = build_keyboard(categories, "start_category", back_target="start")
+    await query.edit_message_text(
+        f"🏘️ الحي المختار: {chosen_neighborhood}\n\nاختر التصنيف:",
+        reply_markup=keyboard
+    )
+    return States.SELECTING_START_CATEGORY
+
+async def _go_back_to_start_landmark_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    """العودة إلى اختيار معلم البداية."""
+    query = update.callback_query
+    start_neighborhood = context.user_data.get('start_neighborhood')
+    chosen_category = context.user_data.get('start_category')
+    landmarks = neighborhood_data[start_neighborhood][chosen_category]
+    keyboard = build_keyboard(landmarks, "start_landmark", back_target="start_neighborhood")
+    await query.edit_message_text(
+        f"🏘️ الحي: {start_neighborhood}\n📂 التصنيف: {chosen_category}\n\nاختر المعلم:",
+        reply_markup=keyboard
+    )
+    return States.SELECTING_START_LANDMARK
+
+async def _go_back_to_end_neighborhood_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    """العودة إلى اختيار حي النهاية."""
+    query = update.callback_query
+    chosen_landmark = context.user_data.get('start_landmark')
+    keyboard = build_keyboard(list(neighborhood_data.keys()), "end_neighborhood", back_target="start_category")
+    await query.edit_message_text(
+        f"✅ نقطة البداية: {chosen_landmark}\n\nاختر نقطة النهاية:",
+        reply_markup=keyboard
+    )
+    return States.SELECTING_END_NEIGHBORHOOD
+
+async def _go_back_to_end_category_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    """العودة إلى اختيار تصنيف النهاية."""
+    query = update.callback_query
+    chosen_neighborhood = context.user_data.get('end_neighborhood')
+    categories = list(neighborhood_data[chosen_neighborhood].keys())
+    keyboard = build_keyboard(categories, "end_category", back_target="start_landmark")
+    await query.edit_message_text(
+        f"🏘️ الحي المختار: {chosen_neighborhood}\n\nاختر التصنيف:",
+        reply_markup=keyboard
+    )
+    return States.SELECTING_END_CATEGORY
+
+# خريطة للتعامل مع التنقل للخلف
+back_map = {
+    "start": _go_back_to_start,
+    "start_neighborhood": _go_back_to_start_category_selection,
+    "start_category": _go_back_to_start_landmark_selection,
+    "start_landmark": _go_back_to_end_neighborhood_selection,
+    "end_neighborhood": _go_back_to_end_category_selection,
+}
+
+async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    """العودة إلى الخطوة السابقة باستخدام back_map."""
+    query = update.callback_query
+    await query.answer()
+    
+    target = query.data.split(":", 1)[1]
+    logger.info(f"User {update.effective_user.first_name} going back to: {target}")
+
+    handler = back_map.get(target)
+    if handler:
+        return await handler(update, context)
+    
+    logger.warning(f"Unknown back target: {target}")
+    return await start(update, context)
+
+
+async def pagination_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles pagination button clicks."""
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        _, prefix, page_str, back_target = query.data.split(':', 3)
+        page = int(page_str)
+        if back_target == '':
+            back_target = None
+    except ValueError:
+        logger.error(f"Error parsing pagination callback data: {query.data}")
+        return
+
+    items = []
+    text = ""
+    current_state = None
+    
+    # Reconstruct the items and text based on the prefix
+    if prefix == "start_neighborhood":
+        items = list(neighborhood_data.keys())
+        text = "🚌 مرحباً بك في بوت مواصلات بورسعيد!\n\nاختر نقطة البداية:"
+        current_state = States.SELECTING_START_NEIGHBORHOOD
+    
+    elif prefix == "start_category":
+        start_neighborhood = context.user_data.get('start_neighborhood')
+        if not start_neighborhood:
+            await query.edit_message_text("حدث خطأ، يرجى البدء من جديد /start")
+            return ConversationHandler.END
+        items = list(neighborhood_data[start_neighborhood].keys())
+        text = f"🏘️ الحي المختار: {start_neighborhood}\n\nاختر التصنيف:"
+        current_state = States.SELECTING_START_CATEGORY
+
+    elif prefix == "start_landmark":
+        start_neighborhood = context.user_data.get('start_neighborhood')
+        start_category = context.user_data.get('start_category')
+        if not all([start_neighborhood, start_category]):
+            await query.edit_message_text("حدث خطأ، يرجى البدء من جديد /start")
+            return ConversationHandler.END
+        items = neighborhood_data[start_neighborhood][start_category]
+        text = f"🏘️ الحي: {start_neighborhood}\n📂 التصنيف: {start_category}\n\nاختر المعلم:"
+        current_state = States.SELECTING_START_LANDMARK
+
+    elif prefix == "end_neighborhood":
+        start_landmark = context.user_data.get('start_landmark')
+        items = list(neighborhood_data.keys())
+        text = f"✅ نقطة البداية: {start_landmark}\n\nاختر نقطة النهاية:"
+        current_state = States.SELECTING_END_NEIGHBORHOOD
+
+    elif prefix == "end_category":
+        end_neighborhood = context.user_data.get('end_neighborhood')
+        if not end_neighborhood:
+            await query.edit_message_text("حدث خطأ، يرجى البدء من جديد /start")
+            return ConversationHandler.END
+        items = list(neighborhood_data[end_neighborhood].keys())
+        text = f"🏘️ الحي المختار: {end_neighborhood}\n\nاختر التصنيف:"
+        current_state = States.SELECTING_END_CATEGORY
+
+    elif prefix == "end_landmark":
+        end_neighborhood = context.user_data.get('end_neighborhood')
+        end_category = context.user_data.get('end_category')
+        if not all([end_neighborhood, end_category]):
+            await query.edit_message_text("حدث خطأ، يرجى البدء من جديد /start")
+            return ConversationHandler.END
+        items = neighborhood_data[end_neighborhood][end_category]
+        text = f"🏘️ الحي: {end_neighborhood}\n📂 التصنيف: {end_category}\n\nاختر المعلم:"
+        current_state = States.SELECTING_END_LANDMARK
+
+    else:
+        logger.warning(f"Unknown prefix for pagination: {prefix}")
+        await query.edit_message_text("حدث خطأ، يرجى البدء من جديد /start")
+        return ConversationHandler.END
+
+    keyboard = build_keyboard(items, prefix, back_target, page=page)
+    await query.edit_message_text(text, reply_markup=keyboard)
+    return current_state
+
+async def noop_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles no-operation callbacks, like page numbers."""
+    await update.callback_query.answer()
+
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """إلغاء المحادثة"""
+    user_first_name = update.effective_user.first_name
+    logger.info(f"User {user_first_name} canceled the conversation.")
+    
+    text = "❌ تم إلغاء المحادثة. استخدم /start للبدء من جديد."
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text)
+    else:
+        await update.message.reply_text(text)
+
+    return ConversationHandler.END
+
+async def handle_unexpected_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة النصوص غير المتوقعة"""
+    logger.info(f"Unexpected text from {update.effective_user.first_name}: {update.message.text}")
+    await update.message.reply_text("من فضلك استخدم الأزرار للاختيار، أو استخدم /cancel للإلغاء.")
+
+# --- الدالة الرئيسية main --- 
+def main() -> None: 
+    """يشغل البوت."""
+    # Set CWD to the script's directory to fix file path issues
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+    if not validate_data_integrity():
+        logger.error("Data validation failed. Bot cannot start.")
+        return
+    
+    application = Application.builder().token(BOT_TOKEN).build()
+
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
+        states={
+            States.SELECTING_START_NEIGHBORHOOD: [CallbackQueryHandler(select_start_neighborhood, pattern=r'^start_neighborhood:')],
+            States.SELECTING_START_CATEGORY: [CallbackQueryHandler(select_start_category, pattern=r'^start_category:')],
+            States.SELECTING_START_LANDMARK: [CallbackQueryHandler(select_start_landmark, pattern=r'^start_landmark:')],
+            States.SELECTING_END_NEIGHBORHOOD: [CallbackQueryHandler(select_end_neighborhood, pattern=r'^end_neighborhood:')],
+            States.SELECTING_END_CATEGORY: [CallbackQueryHandler(select_end_category, pattern=r'^end_category:')],
+            States.SELECTING_END_LANDMARK: [CallbackQueryHandler(select_end_landmark_and_find_route, pattern=r'^end_landmark:')],
+        },
+        fallbacks=[
+            CommandHandler('cancel', cancel),
+            CallbackQueryHandler(cancel, pattern=r'^cancel_action
+
+if __name__ == '__main__':
+    main()
+),
+            CallbackQueryHandler(go_back, pattern=r'^go_back_to:'),
+            CallbackQueryHandler(pagination_handler, pattern=r'^page:'),
+            CallbackQueryHandler(noop_handler, pattern=r'^noop
+
+if __name__ == '__main__':
+    main()
+),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unexpected_text),
+        ],
+    )
+
+    application.add_handler(conv_handler)
+    
+    logger.info("Bot starting with pagination and back button functionality...")
+    application.run_polling()
+
+
+if __name__ == '__main__':
+    main()
