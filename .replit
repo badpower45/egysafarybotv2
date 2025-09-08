@@ -15,15 +15,15 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Telegram Bot"
+args = "Enhanced Bot"
 
 [[workflows.workflow]]
-name = "Telegram Bot"
+name = "Enhanced Bot"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python bot.py"
+args = "python enhanced_bot.py"
 
 [workflows.workflow.metadata]
 outputType = "console"
