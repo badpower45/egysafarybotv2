@@ -407,12 +407,17 @@ def build_keyboard(items, prefix):
             continue
             
         if item_text and callback_identifier:
+            # تقصير البيانات لتجنب خطأ Telegram
+            callback_identifier = callback_identifier[:30] if len(callback_identifier) > 30 else callback_identifier
             callback_data_str = f"{prefix}:{callback_identifier}"
-            row.append(InlineKeyboardButton(item_text, callback_data=callback_data_str))
             
-            if len(row) == max_per_row:
-                keyboard.append(row)
-                row = []
+            # التأكد من أن البيانات لا تتجاوز 64 بايت
+            if len(callback_data_str.encode('utf-8')) <= 64:
+                row.append(InlineKeyboardButton(item_text, callback_data=callback_data_str))
+                
+                if len(row) == max_per_row:
+                    keyboard.append(row)
+                    row = []
     
     if row:
         keyboard.append(row)
