@@ -223,6 +223,23 @@ def export_data():
         'neighborhood_data': neighborhoods_export
     })
 
+@app.route('/api/update_bot')
+def update_bot_data():
+    """تحديث بيانات البوت"""
+    try:
+        from database_helper import update_bot_data
+        success = update_bot_data()
+        
+        if success:
+            flash('تم تحديث بيانات البوت بنجاح!', 'success')
+            return jsonify({'status': 'success', 'message': 'تم تحديث البيانات بنجاح'})
+        else:
+            flash('حدث خطأ أثناء تحديث بيانات البوت', 'error')
+            return jsonify({'status': 'error', 'message': 'فشل في تحديث البيانات'})
+    except Exception as e:
+        flash(f'خطأ: {str(e)}', 'error')
+        return jsonify({'status': 'error', 'message': str(e)})
+
 if __name__ == '__main__':
     init_database()
     app.run(host='0.0.0.0', port=5000, debug=True)
