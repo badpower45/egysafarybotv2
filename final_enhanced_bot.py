@@ -399,13 +399,19 @@ nlp_system = NLPSearchSystem()
 
 # ===== الدوال المساعدة =====
 
-def build_keyboard(items: List, prefix: str, back_target: Optional[str] = None) -> InlineKeyboardMarkup:
-    """بناء لوحة المفاتيح"""
+def build_keyboard(items: List, prefix: str, back_target: Optional[str] = None, page: int = 0, items_per_page: int = 8) -> InlineKeyboardMarkup:
+    """بناء لوحة المفاتيح مع تقسيم الصفحات"""
     keyboard = []
     row = []
     max_per_row = 2
     
-    for item_data in items:
+    # تقسيم العناصر حسب الصفحات
+    total_pages = (len(items) + items_per_page - 1) // items_per_page
+    start_idx = page * items_per_page
+    end_idx = min(start_idx + items_per_page, len(items))
+    page_items = items[start_idx:end_idx]
+    
+    for item_data in page_items:
         if isinstance(item_data, dict):
             item_text = item_data.get("name")
             callback_identifier = item_text
@@ -431,7 +437,21 @@ def build_keyboard(items: List, prefix: str, back_target: Optional[str] = None) 
     if row:
         keyboard.append(row)
     
-    # إضافة أزرار التنقل
+    # أزرار التنقل بين الصفحات
+    if total_pages > 1:
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data=f'{prefix}_page:{page-1}'))
+        
+        # عرض رقم الصفحة
+        nav_buttons.append(InlineKeyboardButton(f"📄 {page+1}/{total_pages}", callback_data='current_page'))
+        
+        if page < total_pages - 1:
+            nav_buttons.append(InlineKeyboardButton("➡️ التالي", callback_data=f'{prefix}_page:{page+1}'))
+        
+        keyboard.append(nav_buttons)
+    
+    # إضافة أزرار التنقل العامة
     nav_buttons = []
     if back_target:
         nav_buttons.append(InlineKeyboardButton("⬅️ رجوع", callback_data=f"back_to_{back_target}"))
@@ -1064,6 +1084,36 @@ async def handle_admin_actions(update: Update, context: ContextTypes.DEFAULT_TYP
     return States.ADMIN_MENU
 
 # دوال التنقل للخلف
+async def handle_page_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    """معالجة تنقل الصفحات"""
+    query = update.callback_query
+    await query.answer()
+    
+    callback_parts = query.data.split(":")
+    page = int(callback_parts[1])
+    
+    if "start_neighborhood_page" in query.data:
+        neighborhoods = list(neighborhood_data.keys())
+        keyboard = build_keyboard(neighborhoods, "start_neighborhood", page=page)
+        await query.edit_message_text(
+            "🏘️ **اختر حي البداية:**",
+            reply_markup=keyboard,
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return States.SELECTING_START_NEIGHBORHOOD
+    
+    elif "end_neighborhood_page" in query.data:
+        neighborhoods = list(neighborhood_data.keys())
+        keyboard = build_keyboard(neighborhoods, "end_neighborhood", "start_category", page=page)
+        await query.edit_message_text(
+            f"✅ **نقطة البداية:** {context.user_data.get('start_landmark')}\n\n🎯 اختر حي الوجهة:",
+            reply_markup=keyboard,
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return States.SELECTING_END_NEIGHBORHOOD
+    
+    return States.MAIN_MENU
+
 async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     """معالجة التنقل للخلف"""
     query = update.callback_query
@@ -1123,6 +1173,7 @@ def main() -> None:
             ],
             States.SELECTING_START_NEIGHBORHOOD: [
                 CallbackQueryHandler(select_start_neighborhood, pattern=r'^start_neighborhood:'),
+                CallbackQueryHandler(handle_page_navigation, pattern=r'^start_neighborhood_page:'),
                 CallbackQueryHandler(handle_navigation, pattern=r'^back_to_'),
                 CallbackQueryHandler(start, pattern=r'^main_menu$')
             ],
@@ -1138,6 +1189,7 @@ def main() -> None:
             ],
             States.SELECTING_END_NEIGHBORHOOD: [
                 CallbackQueryHandler(select_end_neighborhood, pattern=r'^end_neighborhood:'),
+                CallbackQueryHandler(handle_page_navigation, pattern=r'^end_neighborhood_page:'),
                 CallbackQueryHandler(handle_navigation, pattern=r'^back_to_'),
                 CallbackQueryHandler(start, pattern=r'^main_menu$')
             ],

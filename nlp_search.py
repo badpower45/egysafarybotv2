@@ -104,6 +104,11 @@ class NLPSearchSystem:
     
     def search_route_from_text(self, text: str) -> Dict:
         """البحث عن مسار من النص المكتوب"""
+        # أولاً البحث عن المناطق السكنية المبسطة
+        residential_match = self.parse_residential_areas(text)
+        if residential_match:
+            return residential_match
+        
         start_text, end_text = self.extract_locations_from_text(text)
         
         result = {
@@ -128,52 +133,96 @@ class NLPSearchSystem:
         if result['start_location'] or result['end_location']:
             result['status'] = 'partial_match'
             if result['start_location'] and result['end_location']:
-                result['status'] = 'full_match'
-                result['message'] = f"تم العثور على: {result['start_location']['name']} → {result['end_location']['name']}"
+                result['status'] = 'success'
+                result['message'] = f"✅ تم العثور على مسار من {result['start_location']['name']} إلى {result['end_location']['name']}"
             elif result['start_location']:
-                result['message'] = f"تم العثور على نقطة البداية: {result['start_location']['name']}. من فضلك حدد الوجهة."
+                result['message'] = f"✅ تم العثور على نقطة البداية: {result['start_location']['name']}. يرجى تحديد الوجهة."
             else:
-                result['message'] = f"تم العثور على الوجهة: {result['end_location']['name']}. من فضلك حدد نقطة البداية."
-        
-        # إضافة اقتراحات
-        if not result['start_location'] and start_text:
-            suggestions = self._get_suggestions(start_text)
-            result['suggestions'].extend([f"هل قصدت '{s}' كنقطة بداية؟" for s in suggestions])
-        
-        if not result['end_location'] and end_text:
-            suggestions = self._get_suggestions(end_text)
-            result['suggestions'].extend([f"هل قصدت '{s}' كوجهة؟" for s in suggestions])
+                result['message'] = f"✅ تم العثور على الوجهة: {result['end_location']['name']}. يرجى تحديد نقطة البداية."
         
         return result
-    
-    def _get_suggestions(self, query: str, limit: int = 3) -> List[str]:
-        """الحصول على اقتراحات لأسماء مشابهة"""
+
+    def get_suggestions_for_text(self, text: str, limit: int = 5) -> List[str]:
+        """الحصول على اقتراحات للنص المدخل"""
+        text = text.lower().strip()
         suggestions = []
-        query = query.lower()
         
-        for landmark_name in self.landmarks_index.keys():
-            score = self.similarity_score(query, landmark_name)
-            if 0.3 <= score < 0.6:  # تشابه متوسط
-                suggestions.append((landmark_name, score))
+        for landmark_name, landmark_info in self.landmarks_index.items():
+            if text in landmark_name:
+                suggestion = f"{landmark_info['data'].get('name', landmark_name)} - {landmark_info['neighborhood']}"
+                if suggestion not in suggestions:
+                    suggestions.append(suggestion)
+            
+            if len(suggestions) >= limit:
+                break
         
-        # ترتيب حسب النتيجة وإرجاع الأفضل
-        suggestions.sort(key=lambda x: x[1], reverse=True)
-        return [s[0] for s in suggestions[:limit]]
+        return suggestions
+
+    def parse_residential_areas(self, query: str) -> Dict:
+        """تحليل المناطق السكنية المبسطة"""
+        # إزالة كلمات مثل "السكنية"، "منطقة"
+        query = re.sub(r'\b(السكنية|السكنيه|منطقة|منطقه)\b', '', query)
+        query = query.strip()
+        
+        # البحث عن نمط "من X لـ Y" أو "X للـ Y" أو "X لـ Y"
+        patterns = [
+            r'من\s+(.+?)\s+(?:لـ|ل|إلى|الى)\s+(.+)',
+            r'(.+?)\s+(?:للـ|للـ|لـ|ل)\s+(.+)',
+            r'(.+?)\s+إلى\s+(.+)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, query)
+            if match:
+                start_area = match.group(1).strip()
+                end_area = match.group(2).strip()
+                
+                # البحث عن أقرب مطابقة للمناطق السكنية
+                start_match = self.find_residential_area(start_area)
+                end_match = self.find_residential_area(end_area)
+                
+                if start_match and end_match:
+                    return {
+                        'status': 'success',
+                        'type': 'residential_route',
+                        'start_area': start_match,
+                        'end_area': end_match,
+                        'message': f'🚌 البحث عن مسار من منطقة {start_match} إلى منطقة {end_match}',
+                        'confidence': 0.85
+                    }
+        
+        return None
     
-    def is_natural_language_query(self, text: str) -> bool:
-        """التحقق مما إذا كان النص استفهام طبيعي"""
-        text = text.lower()
+    def find_residential_area(self, area_name: str) -> str:
+        """البحث عن المنطقة السكنية الأقرب"""
+        area_name = area_name.lower().strip()
         
-        # البحث عن كلمات استفهام
-        question_indicators = ['إزاي', 'ازاي', 'كيف', 'من', 'إلى', 'الى', '؟', '?']
+        # قائمة المناطق السكنية الشائعة
+        residential_areas = [
+            "بوروتكس", "السلام", "المناخ", "الشرق", "العرب",
+            "الزهور", "المنطقة الأولى", "المنطقة الثانية", 
+            "المنطقة الثالثة", "المنطقة الرابعة", "المنطقة الخامسة", "المنطقة السادسة",
+            "منطقة شمال الحرية", "قشلاق السواحل", "حي ناصر"
+        ]
         
-        return any(indicator in text for indicator in question_indicators)
-
-# إنشاء مثيل عام - سيتم تهيئته عند تشغيل البوت
-nlp_system = None
-
-def initialize_nlp_system(neighborhood_data):
-    """تهيئة نظام معالجة اللغة الطبيعية"""
-    global nlp_system
-    nlp_system = NLPSearchSystem(neighborhood_data)
-    return nlp_system
+        # البحث المباشر
+        for area in residential_areas:
+            if area_name == area.lower():
+                return area
+        
+        # البحث الجزئي
+        for area in residential_areas:
+            if area_name in area.lower() or area.lower() in area_name:
+                return area
+        
+        # البحث بالتشابه
+        best_match = None
+        best_ratio = 0.6
+        
+        for area in residential_areas:
+            ratio = SequenceMatcher(None, area_name, area.lower()).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_match = area
+        
+        return best_match
