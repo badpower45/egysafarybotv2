@@ -19,6 +19,15 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
+# إضافة مرشح JSON للقوالب
+@app.template_filter('from_json')
+def from_json_filter(value):
+    """تحويل JSON string إلى Python object"""
+    try:
+        return json.loads(value)
+    except:
+        return []
+
 # Models قاعدة البيانات
 class Location(db.Model):
     """جدول الأماكن والمعالم"""
@@ -59,10 +68,15 @@ def init_database():
             for neighborhood, categories in neighborhood_data.items():
                 for category, locations in categories.items():
                     for location in locations:
+                        # التعامل مع البيانات المعقدة
+                        location_name = location
+                        if isinstance(location, dict):
+                            location_name = location.get('name', str(location))
+                        
                         new_location = Location(
-                            name=location,
-                            category=category,
-                            neighborhood=neighborhood
+                            name=str(location_name),
+                            category=str(category),
+                            neighborhood=str(neighborhood)
                         )
                         db.session.add(new_location)
             

@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">لوحة التحكم الرئيسية</h1>
+</div>
+
+<!-- إحصائيات سريعة -->
+<div class="row mb-4">
+    <div class="col-xl-4 col-md-6 mb-4">
+        <div class="card border-left-primary shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                            إجمالي الخطوط
+                        </div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">{{ routes_count }}</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="bi bi-diagram-3 fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-4 col-md-6 mb-4">
+        <div class="card border-left-success shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                            إجمالي الأماكن
+                        </div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">{{ locations_count }}</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="bi bi-geo-alt fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-4 col-md-6 mb-4">
+        <div class="card border-left-info shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+                            إجمالي الأحياء
+                        </div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">{{ neighborhoods_count }}</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="bi bi-house-door fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- إجراءات سريعة -->
+<div class="row">
+    <div class="col-lg-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-plus-circle"></i> إجراءات سريعة
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="{{ url_for('add_route') }}" class="btn btn-primary">
+                        <i class="bi bi-diagram-3"></i> إضافة خط جديد
+                    </a>
+                    <a href="{{ url_for('add_location') }}" class="btn btn-success">
+                        <i class="bi bi-geo-alt"></i> إضافة مكان جديد
+                    </a>
+                    <a href="{{ url_for('export_data') }}" class="btn btn-info" target="_blank">
+                        <i class="bi bi-download"></i> تصدير البيانات
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-info-circle"></i> معلومات النظام
+                </h5>
+            </div>
+            <div class="card-body">
+                <p class="card-text">
+                    <strong>📍 بوت مواصلات بورسعيد</strong><br>
+                    نظام إدارة متقدم لخطوط المواصلات والمعالم في مدينة بورسعيد.
+                </p>
+                <p class="card-text">
+                    <small class="text-muted">
+                        آخر تحديث: {{ moment().format('YYYY-MM-DD HH:mm') }}
+                    </small>
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}إدارة الخطوط - {{ super() }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">إدارة الخطوط</h1>
+    <a href="{{ url_for('add_route') }}" class="btn btn-primary">
+        <i class="bi bi-plus-lg"></i> إضافة خط جديد
+    </a>
+</div>
+
+{% if routes %}
+<div class="row">
+    {% for route in routes %}
+    <div class="col-lg-6 mb-4">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">{{ route.name }}</h5>
+                <span class="badge bg-success">{{ route.fare }} جنيه</span>
+            </div>
+            <div class="card-body">
+                {% if route.start_area and route.end_area %}
+                <p class="card-text">
+                    <strong>من:</strong> {{ route.start_area }}<br>
+                    <strong>إلى:</strong> {{ route.end_area }}
+                </p>
+                {% endif %}
+                
+                <div class="mb-3">
+                    <h6>محطات الخط:</h6>
+                    {% set key_points = route.key_points|from_json %}
+                    {% if key_points %}
+                    <div class="route-points">
+                        {% for point in key_points[:5] %}
+                        <span class="badge bg-light text-dark me-1 mb-1">{{ loop.index }}. {{ point }}</span>
+                        {% endfor %}
+                        {% if key_points|length > 5 %}
+                        <span class="text-muted">... و {{ key_points|length - 5 }} محطة أخرى</span>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+                
+                {% if route.notes %}
+                <div class="small text-muted">
+                    <strong>ملاحظات:</strong> {{ route.notes }}
+                </div>
+                {% endif %}
+            </div>
+            <div class="card-footer">
+                <small class="text-muted">
+                    تم الإنشاء: {{ route.created_at.strftime('%Y-%m-%d %H:%M') }}
+                </small>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="text-center py-5">
+    <i class="bi bi-diagram-3 display-1 text-muted"></i>
+    <h3 class="mt-3 text-muted">لا توجد خطوط مضافة بعد</h3>
+    <p class="text-muted">ابدأ بإضافة أول خط للمواصلات</p>
+    <a href="{{ url_for('add_route') }}" class="btn btn-primary">
+        <i class="bi bi-plus-lg"></i> إضافة خط جديد
+    </a>
+</div>
+{% endif %}
+{% endblock %}
