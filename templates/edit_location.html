@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+
+{% block title %}تعديل المكان - {{ super() }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">تعديل المكان: {{ location.name }}</h1>
+    <a href="{{ url_for('locations_list') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> العودة للأماكن
+    </a>
+</div>
+
+<div class="row">
+    <div class="col-lg-8">
+        <form method="POST">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">تعديل معلومات المكان</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">اسم المكان *</label>
+                        <input type="text" class="form-control" id="name" name="name" 
+                               value="{{ location.name }}" required>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="neighborhood" class="form-label">الحي *</label>
+                            <select class="form-select" id="neighborhood" name="neighborhood" required>
+                                {% for neighborhood in neighborhoods %}
+                                <option value="{{ neighborhood }}" 
+                                        {% if neighborhood == location.neighborhood %}selected{% endif %}>
+                                    {{ neighborhood }}
+                                </option>
+                                {% endfor %}
+                                <option value="other">حي جديد...</option>
+                            </select>
+                            <input type="text" class="form-control mt-2" id="new_neighborhood" 
+                                   name="new_neighborhood" placeholder="اسم الحي الجديد" style="display: none;">
+                        </div>
+                        
+                        <div class="col-md-6 mb-3">
+                            <label for="category" class="form-label">التصنيف *</label>
+                            <select class="form-select" id="category" name="category" required>
+                                {% for category in categories %}
+                                <option value="{{ category }}" 
+                                        {% if category == location.category %}selected{% endif %}>
+                                    {{ category }}
+                                </option>
+                                {% endfor %}
+                                <option value="other">تصنيف جديد...</option>
+                            </select>
+                            <input type="text" class="form-control mt-2" id="new_category" 
+                                   name="new_category" placeholder="اسم التصنيف الجديد" style="display: none;">
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="coordinates" class="form-label">الإحداثيات (اختياري)</label>
+                        <input type="text" class="form-control" id="coordinates" name="coordinates" 
+                               value="{{ location.coordinates or '' }}"
+                               placeholder="مثال: 31.2398, 32.2842">
+                        <div class="form-text">يمكنك الحصول على الإحداثيات من Google Maps</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-4 d-flex gap-2">
+                <button type="submit" class="btn btn-success">
+                    <i class="bi bi-check-lg"></i> حفظ التعديلات
+                </button>
+                <a href="{{ url_for('locations_list') }}" class="btn btn-secondary">
+                    <i class="bi bi-x-lg"></i> إلغاء
+                </a>
+                <button type="button" class="btn btn-danger" onclick="confirmDelete()">
+                    <i class="bi bi-trash"></i> حذف المكان
+                </button>
+            </div>
+        </form>
+
+        <!-- نموذج حذف مخفي -->
+        <form id="deleteForm" method="POST" action="{{ url_for('delete_location', location_id=location.id) }}" style="display: none;">
+        </form>
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0">
+                    <i class="bi bi-info-circle"></i> تعليمات التعديل
+                </h6>
+            </div>
+            <div class="card-body">
+                <ol class="small">
+                    <li><strong>اسم المكان:</strong> عدل الاسم كما تريد</li>
+                    <li><strong>الحي:</strong> غير الحي أو أضف حي جديد</li>
+                    <li><strong>التصنيف:</strong> غير التصنيف أو أضف تصنيف جديد</li>
+                    <li><strong>الإحداثيات:</strong> حدث الموقع الدقيق</li>
+                    <li><strong>الحذف:</strong> لحذف المكان بالكامل اضغط "حذف المكان"</li>
+                </ol>
+                
+                <div class="alert alert-warning mt-3">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <strong>تحذير:</strong> حذف المكان سيؤدي لإزالته من جميع الخطوط التي يمر بها. تأكد من تحديث بيانات البوت بعد التعديل.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('neighborhood').addEventListener('change', function() {
+    const newNeighborhoodInput = document.getElementById('new_neighborhood');
+    if (this.value === 'other') {
+        newNeighborhoodInput.style.display = 'block';
+        newNeighborhoodInput.required = true;
+        newNeighborhoodInput.name = 'neighborhood';
+        this.name = '';
+    } else {
+        newNeighborhoodInput.style.display = 'none';
+        newNeighborhoodInput.required = false;
+        newNeighborhoodInput.name = 'new_neighborhood';
+        this.name = 'neighborhood';
+    }
+});
+
+document.getElementById('category').addEventListener('change', function() {
+    const newCategoryInput = document.getElementById('new_category');
+    if (this.value === 'other') {
+        newCategoryInput.style.display = 'block';
+        newCategoryInput.required = true;
+        newCategoryInput.name = 'category';
+        this.name = '';
+    } else {
+        newCategoryInput.style.display = 'none';
+        newCategoryInput.required = false;
+        newCategoryInput.name = 'new_category';
+        this.name = 'category';
+    }
+});
+
+function confirmDelete() {
+    if (confirm('هل أنت متأكد من حذف هذا المكان؟ هذا الإجراء لا يمكن التراجع عنه!')) {
+        document.getElementById('deleteForm').submit();
+    }
+}
+</script>
+{% endblock %}

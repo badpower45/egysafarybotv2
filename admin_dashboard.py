@@ -223,6 +223,96 @@ def export_data():
         'neighborhood_data': neighborhoods_export
     })
 
+@app.route('/routes/edit/<int:route_id>', methods=['GET', 'POST'])
+def edit_route(route_id):
+    """تعديل خط موجود"""
+    route = Route.query.get_or_404(route_id)
+    
+    if request.method == 'POST':
+        route.name = request.form.get('name')
+        route.fare = float(request.form.get('fare', 4.5))
+        route.start_area = request.form.get('start_area', '')
+        route.end_area = request.form.get('end_area', '')
+        selected_locations = request.form.getlist('locations')
+        route.key_points = json.dumps(selected_locations, ensure_ascii=False)
+        route.notes = request.form.get('notes', '')
+        
+        db.session.commit()
+        
+        flash(f'تم تحديث الخط "{route.name}" بنجاح!', 'success')
+        return redirect(url_for('routes_list'))
+    
+    # جلب جميع الأماكن مرتبة
+    locations = Location.query.order_by(Location.neighborhood, Location.category, Location.name).all()
+    neighborhoods = {}
+    
+    for location in locations:
+        if location.neighborhood not in neighborhoods:
+            neighborhoods[location.neighborhood] = {}
+        if location.category not in neighborhoods[location.neighborhood]:
+            neighborhoods[location.neighborhood][location.category] = []
+        neighborhoods[location.neighborhood][location.category].append(location)
+    
+    # الأماكن الحالية للخط
+    try:
+        current_locations = json.loads(route.key_points)
+    except:
+        current_locations = []
+    
+    return render_template('edit_route.html', 
+                         route=route, 
+                         neighborhoods=neighborhoods,
+                         current_locations=current_locations)
+
+@app.route('/routes/delete/<int:route_id>', methods=['POST'])
+def delete_route(route_id):
+    """حذف خط"""
+    route = Route.query.get_or_404(route_id)
+    route_name = route.name
+    
+    db.session.delete(route)
+    db.session.commit()
+    
+    flash(f'تم حذف الخط "{route_name}" بنجاح!', 'success')
+    return redirect(url_for('routes_list'))
+
+@app.route('/locations/edit/<int:location_id>', methods=['GET', 'POST'])
+def edit_location(location_id):
+    """تعديل مكان موجود"""
+    location = Location.query.get_or_404(location_id)
+    
+    if request.method == 'POST':
+        location.name = request.form.get('name')
+        location.category = request.form.get('category')
+        location.neighborhood = request.form.get('neighborhood')
+        location.coordinates = request.form.get('coordinates', '')
+        
+        db.session.commit()
+        
+        flash(f'تم تحديث المكان "{location.name}" بنجاح!', 'success')
+        return redirect(url_for('locations_list'))
+    
+    # جلب الأحياء والتصنيفات الموجودة
+    neighborhoods = db.session.query(Location.neighborhood.distinct()).all()
+    categories = db.session.query(Location.category.distinct()).all()
+    
+    return render_template('edit_location.html', 
+                         location=location,
+                         neighborhoods=[n[0] for n in neighborhoods],
+                         categories=[c[0] for c in categories])
+
+@app.route('/locations/delete/<int:location_id>', methods=['POST'])
+def delete_location(location_id):
+    """حذف مكان"""
+    location = Location.query.get_or_404(location_id)
+    location_name = location.name
+    
+    db.session.delete(location)
+    db.session.commit()
+    
+    flash(f'تم حذف المكان "{location_name}" بنجاح!', 'success')
+    return redirect(url_for('locations_list'))
+
 @app.route('/api/update_bot')
 def update_bot_data():
     """تحديث بيانات البوت"""
